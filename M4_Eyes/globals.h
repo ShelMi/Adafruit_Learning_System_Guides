@@ -113,8 +113,8 @@ typedef struct {
 } columnStruct;
 
 // A simple state machine is used to control eye blinks/winks:
-#define NOBLINK 0       // Not currently engaged in a blink
-#define ENBLINK 1       // Eyelid is currently closing
+#define NOBLINK     0   // Not currently engaged in a blink
+#define ENBLINK     1   // Eyelid is currently closing
 #define DEBLINK 2       // Eyelid is currently opening
 typedef struct {
   uint8_t  state;       // NOBLINK/ENBLINK/DEBLINK

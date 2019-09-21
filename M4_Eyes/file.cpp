@@ -184,7 +184,7 @@ static void getFilename(JsonVariant v, char **ptr) {
 }
 
 void loadConfig(char *filename) {
-  File    file;
+  File file;
   uint8_t rotation = 3;
 
   if(file = filesys.open(filename, FILE_READ)) {
