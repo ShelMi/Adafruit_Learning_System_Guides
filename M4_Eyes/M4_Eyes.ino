@@ -504,6 +504,20 @@ void loop() {
           // probability with the distance of the saccade.
           // The graph at Fig. 1 in the reference article shows probability rising from
           // nil for movements up to about 5°, up to about 75% for movements of 45°.
+          
+          // <Fun fact> having no relation to code:
+          // It has been proposed that there is a solid evolutionary reason why eyeblinks occur during
+          //   eye movements (saccades) - particularly long movements.  The proposed reason is:
+          //   Avoiding predation is definitely an evolutionary advantage.  Vision is extremely
+          //   important for avoiding predation - seeing evidence of a predator is often the earliest
+          //   possible warning.  It is known that when your eyes are moving, unavoidably your brain shuts off your vision
+          //   during the entire course of the saccade.  (Yeah, I know you don't notice it, but it is true
+          //   and can be demonstrated.)  Can't see predator during saccade!  Same goes for blinks - can't see
+          //   a predator through closed eyelids - and estimates range that as much as 5% - 15% of the time our
+          //   eyes are closed due to blinking.  Darn!  At least there's one thing we can do, make the blink
+          //   times coincide with the saccade.  That way we only pay one vision penalty rather than two separate penalties.
+          // </fun fact>
+          
           if(eye[eyeNum].blink.state == NOBLINK) {
             // Not blinking currently, should we initiate a blink?
             //Serial.print("  distance moved: "); Serial.println(distMoved);
