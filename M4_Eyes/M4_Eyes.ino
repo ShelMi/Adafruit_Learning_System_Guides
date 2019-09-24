@@ -63,6 +63,34 @@ bool     booped                  = false;
 int      fixate                  = 7;
 uint8_t  lightSensorFailCount    = 0;
 
+// For glint
+int      glintLeftX[NUM_EYES];
+int      glintRightX[NUM_EYES];
+int      glintUpperY[NUM_EYES];
+int      glintLowerY[NUM_EYES];
+
+uint8_t glintBitTable[8] = {   // octagon, approximately a disk, matches GLINT_RADIUS
+  0x3C,
+  0x7E,
+  0xFF,
+  0xFF,
+  0xFF,
+  0xFF,
+  0x7E,
+  0x3C,
+  };
+
+#define GLINT_RADIUS      4     // matches size of glintBitTable[]
+#define GLINT_OFFSET_UP   9     // imagining a light source above and to the left of viewer
+#define GLINT_OFFSET_LEFT 9
+#define GLINT_STABILIZER  1/3   // If this were 1, glint would be decoupled from pupil position,
+                                //   i.e. would be stationary in the center of the screen.
+                                // If it were 0, glint would be fixed on the pupil and 
+                                //   thus would not display a natural reaction to eye rotation.
+                                // An example of change of glint position as eye rotates: observe eye-roll video at e.g.
+                                // https://www.istockphoto.com/video/senior-adult-male-looking-through-magnifying-glass-gm490843002-75323713
+#define GLINT_COLOR   0xFFFF  // 565 white
+
 // For autonomous iris scaling
 #define  IRIS_LEVELS 7
 float    iris_prev[IRIS_LEVELS] = { 0 };
@@ -463,7 +491,6 @@ void loop() {
     if(!x) { // If it's the first column...
 
       // ONCE-PER-FRAME EYE ANIMATION LOGIC HAPPENS HERE -------------------
-
       float eyeX, eyeY;
       // Eye movement
       int32_t dt = t - eyeMoveStartTime;      // uS elapsed since last eye event
@@ -533,6 +560,25 @@ void loop() {
         // Eyelids naturally "track" the pupils (move up or down automatically)
         int ix = (int)map2screen(mapRadius - eye[eyeNum].eyeX) + 120, // Pupil position
             iy = (int)map2screen(mapRadius - eye[eyeNum].eyeY) + 120; // on screen
+
+        // glint position logic (must come before the trackFactor mod of iy)
+        glintLeftX[eyeNum] = ix - GLINT_RADIUS - (ix - 120) * GLINT_STABILIZER;  // change of glint as eye rotates...
+        // glint moves as eyeball rotates, because glint is a reflection from cornea,
+        // which has a radius of curvature smaller than that of the eyeball.
+        // Observe eye-roll video e.g. https://www.istockphoto.com/video/senior-adult-male-looking-through-magnifying-glass-gm490843002-75323713
+        // Compensate for the following line which occurs during the display of the columns:
+        //     int lidColumn = (eyeNum & 1) ? (239 - x) : x; // Reverse eyelid columns for left eye
+        // Note: Monster's right eye is 0
+        //                                  monster left, decrease moves right          monster right, increase moves right
+        glintLeftX[eyeNum] = (eyeNum & 1) ? 239 - glintLeftX[eyeNum] - 2*GLINT_RADIUS : glintLeftX[eyeNum] + GLINT_RADIUS; // Reverse eyelid columns for monster left eye
+        // now shift to the 10 o'clock offset
+        glintLeftX[eyeNum] = (eyeNum & 1) ? glintLeftX[eyeNum] + GLINT_OFFSET_LEFT : glintLeftX[eyeNum] - GLINT_OFFSET_LEFT;
+        glintRightX[eyeNum] = glintLeftX[eyeNum] + 2 * GLINT_RADIUS;
+        glintUpperY[eyeNum] = iy + GLINT_RADIUS + GLINT_OFFSET_UP - (iy - 120) * GLINT_STABILIZER; // change of glint as eye rotates 
+                                                                                    // observe eye-roll video e.g. https://www.istockphoto.com/video/senior-adult-male-looking-through-magnifying-glass-gm490843002-75323713
+        glintLowerY[eyeNum] = glintUpperY[eyeNum] - 2 * GLINT_RADIUS;
+        // now that glint pos'n is computed, OK to modify iy
+
         iy += irisRadius * trackFactor;
         if(eyeNum & 1) ix = 239 - ix; // Flip for right eye
         if(iy > upperOpen[ix]) {
@@ -558,7 +604,6 @@ void loop() {
       // they need to stay consistent across frame
       eye[eyeNum].upperLidFactor = (eye[eyeNum].upperLidFactor * 0.6) + (uq * 0.4);
       eye[eyeNum].lowerLidFactor = (eye[eyeNum].lowerLidFactor * 0.6) + (lq * 0.4);
-
 
       // Process blinks
       if(eye[eyeNum].blink.state) { // Eye currently blinking?
@@ -772,13 +817,40 @@ void loop() {
                 int ty = dist  * eye[eyeNum].sclera.height / 128;
                 *ptr++ = eye[eyeNum].sclera.data[ty * eye[eyeNum].sclera.width + tx];
               } else if(dist > -128) { // Iris or pupil
-                int ty = dist * iPupilFactor / -32768;
-                if(ty >= eye[eyeNum].iris.height) { // Pupil
-                  *ptr++ = eye[eyeNum].pupilColor;
-                } else { // Iris
-                  angle = ((angle + eye[eyeNum].iris.angle) & 1023) ^ eye[eyeNum].iris.mirror;
-                  int tx = angle * eye[eyeNum].iris.width / 1024;
-                  *ptr++ = eye[eyeNum].iris.data[ty * eye[eyeNum].iris.width + tx];
+                // Iris or pupil, so we know a glint is allowable (no glint from eyelid)
+                // Don't render iris/pupil pixel if a glint is taking place, substitute the glint
+                if ((lidColumn >= glintLeftX[eyeNum]) \
+                    && (lidColumn < glintRightX[eyeNum]) \
+                    && (y > glintLowerY[eyeNum]) \
+                    && (y <= glintUpperY[eyeNum])) {
+                  // possibly (probably) draw a white glint pixel
+                  uint8_t glintBits = glintBitTable[lidColumn - glintLeftX[eyeNum]];
+                  if (glintBits & (1 << (glintUpperY[eyeNum] - y))) {
+                    // this pixel contributes to the glint image, overlying the pupil or iris
+                    *ptr++ = GLINT_COLOR;
+                  } else {
+                    // within glint bounding box, but no glint at this pixel, so render the underlying pupil or iris
+                    int ty = dist * iPupilFactor / -32768;
+                    if(ty >= eye[eyeNum].iris.height) {
+                      // Pupil
+                      *ptr++ = eye[eyeNum].pupilColor;
+                    } else {
+                      // Iris
+                      angle = ((angle + eye[eyeNum].iris.angle) & 1023) ^ eye[eyeNum].iris.mirror;
+                      int tx = angle * eye[eyeNum].iris.width / 1024;
+                      *ptr++ = eye[eyeNum].iris.data[ty * eye[eyeNum].iris.width + tx];
+                    }
+                  }
+                } else {    // if (bShowGlintPixel)
+                  // not glinting, continue with rendering pupil or iris
+                  int ty = dist * iPupilFactor / -32768;
+                  if(ty >= eye[eyeNum].iris.height) { // Pupil
+                      *ptr++ = eye[eyeNum].pupilColor;
+                  } else { // Iris
+                      angle = ((angle + eye[eyeNum].iris.angle) & 1023) ^ eye[eyeNum].iris.mirror;
+                      int tx = angle * eye[eyeNum].iris.width / 1024;
+                      *ptr++ = eye[eyeNum].iris.data[ty * eye[eyeNum].iris.width + tx];
+                  }
                 }
               } else {
                 *ptr++ = eye[eyeNum].backColor; // Back of eye
