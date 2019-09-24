@@ -465,6 +465,7 @@ void loop() {
       // ONCE-PER-FRAME EYE ANIMATION LOGIC HAPPENS HERE -------------------
 
       float eyeX, eyeY;
+      bool forceBlink = false;
       // Eye movement
       int32_t dt = t - eyeMoveStartTime;      // uS elapsed since last eye event
       if(eyeInMotion) {                       // Currently moving?
@@ -487,13 +488,42 @@ void loop() {
           float r = (float)mapDiameter - 240.0 * M_PI_2; // radius of motion
           r *= 0.6;
           eyeNewX = random(-r, r);
-          float h = sqrt(r * r - x * x);
-          eyeNewY = random(-h, h);
+          // following two lines commented out because x is guaranteed to be 0, by the enclosing if(!x) statement
+          // float h = sqrt(r * r - x * x);
+          // eyeNewY = random(-h, h);
+          eyeNewY = random(-r, r);
+          float distMoved = pow((eyeNewX * eyeNewX + eyeNewY * eyeNewY), 0.5);
           eyeNewX += mapRadius;
           eyeNewY += mapRadius;
           eyeMoveDuration  = random(83000, 166000); // ~1/12 - ~1/6 sec
           eyeMoveStartTime = t;               // Save initial time of move
           eyeInMotion      = true;            // Start move on next frame
+          
+          // it has been reported, at https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3262917/
+          // that gaze shifts can trigger blinks, increasing in
+          // probability with the distance of the saccade.
+          // The graph at Fig. 1 in the reference article shows probability rising from
+          // nil for movements up to about 5°, up to about 75% for movements of 45°.
+          if(eye[eyeNum].blink.state == NOBLINK) {
+            // Not blinking currently, should we initiate a blink?
+            //Serial.print("  distance moved: "); Serial.println(distMoved);
+            // i am unsure how to translate this to degrees...
+            // the largest values i've seen here is about 75, so let's guess that
+            // that is a value which should give 100% likelihood of blink
+//[too many blinks?]  #define SACCADE_LENGTH_FOR_SURE_BLINK   75
+            #define SACCADE_LENGTH_FOR_SURE_BLINK   100
+            #define SACCADE_MIN_FOR_NO_BLINK        7.5
+            #define SACCADE_RANGE_FOR_BLINK         (SACCADE_LENGTH_FOR_SURE_BLINK - SACCADE_MIN_FOR_NO_BLINK)
+            int16_t pPercent = 100 * (distMoved - SACCADE_MIN_FOR_NO_BLINK) / SACCADE_RANGE_FOR_BLINK;
+            pPercent = max(pPercent, 0);
+            pPercent = min(pPercent, 100);
+            if(random(100) < pPercent) {
+              forceBlink = true;
+            } else {
+              forceBlink = false;
+            }
+//Serial.print("pPercent: "); Serial.print(pPercent); Serial.print("  forceBlink: "); Serial.println(forceBlink);
+          }
         }
       }
 
@@ -514,7 +544,115 @@ void loop() {
 
       // Similar to the autonomous eye movement above -- blink start times
       // and durations are random (within ranges).
-      if((t - timeOfLastBlink) >= timeToNextBlink) { // Start new blink?
+      
+      // Notes on blinking:
+      // motion of eye during blinks: https://www.cell.com/current-biology/fulltext/S0960-9822(16)31509-3
+      // https://www.reddit.com/r/explainlikeimfive/comments/5mzkee/eli5_why_do_eyeballs_roll_back_when_we_close_our/
+      //   "Most people's eyes (but not all) do go up and outward a little when you close the lids in something called Bell's phenomenon.
+      //    That's probably to help protect the more delicate parts of the eye from something coming at it if the lid doesn't close fast enough."
+      // blink animation: https://www.bloopanimation.com/blinking-animation/
+      // Why do we blink?
+      // A blink is not a random thing. Yes, we sometimes blink because our eyes are dry, but there are 
+      // a few universal reasons for blinking that an animator needs to be aware of:
+
+      // Head turn.
+      // Try this right now: look to your left and then quickly look to you right. Did you blink? Odds are you did.
+      // A head turn (or any fast head movement) would almost always get us to blink.
+
+      // A change of thought
+      // When a character realizes something or thinks of a solution to a problem, a blink would emphasize it and convey that emotion.
+
+      // Staring
+      // After a long lingering look a blink can help keep things alive.
+      
+      // Blink tutorial thoughts: https://www.youtube.com/watch?v=V78_zYq4V6A
+      // "If you want to draw attention to the eyes, time-offset the blinks from each other"
+      // "do not offset quick blinks, but long blinks are good to offset"
+      // "on blinks associated with turns of the head, the leading eye should unblink first"
+      // "eye movements are never smooth, they move in a series of jerks - never give the feeling the eyes are just floating across"
+      //   "2-3 frames, then ease down, then 2-3 more frames, etc."
+      //   "on an dart, always move both eyes together"
+      // "eye darts - dart away, then look back"
+      // "every time we move our head (or eyes?) we blink"
+      // "nervous people blink a lot" (by extension, then, a thuggish person would blink more rarely)
+      // "eyelids should always close for a minimum of two frames"
+      // "about an 80:20 split between upper eyelid:lower eyelid movement"
+      // "we actually roll our eyes upward when we blink"
+      // "sequence the components of the blink - eyelid first, followed by crease"
+      // "eyes 'slow' into the blink, then speed up, then bounce back out"
+      
+      // Secret formula for blinks: https://www.youtube.com/watch?v=snG8TOmGlNw
+      // open; slightly less open; closed; closed curved down a bit more; slightly open; same as first slightly open; open
+      // this is called 'one down, two up'
+      // can also do 'two down, one up'
+      // condensed version: 100%, 80%, 0%, 0%, 30%, 100%
+      // more active version: 100, 80, 0, 0-, 30, 105, 100
+      
+      // https://en.wikipedia.org/wiki/Blinking
+      // average duration 100-150 msec, or maybe 100-400 msec.
+      // 2 - 10 sec between blinks
+      // when focused on same object, blink rate decreases to 15-20 sec
+      
+      // https://www.quora.com/Why-do-your-eyes-roll-back-when-you-close-your-eyes
+      // It's called Bell's phenomenon and it is basically a way of protecting our eyes.
+      // The most sensitive portion of the front of our eyes is the cornea. If we sense
+      // impending injury, the eye will immediately turn up so the cornea is protected 
+      // even before the eyelid begins to close.
+      
+            // Types of blinks
+      // 1) Regular blink
+      //    Closing lids (2 frames) hold eyes closed (1 frame) opening lids (3 frames).
+      //    Uses:
+      //      Staring
+      //      Head movement
+      //      Character is bored
+      //      Keeping the character alive
+      
+      // 2) Fast blink
+      // Closing lids (2 frames) opening lids (3 frames)
+      // Uses:
+      //   Character is anxious
+      //   Something went past the character’s face
+      //   Character is angry
+      
+      // 3) Long blink
+      // Closing lids (3 frames) hold eyes closed (2 frames) opening lids (4 frames)
+      // Uses:
+      //   Long head movement
+      //   Change of thought
+      
+      // A scholarly, possibly definitive, study of voluntary blink dynamics is at
+        // https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4043155/
+        // "The kinematics of one voluntary eye blink was studied using a high-speed video camera recording
+        // at 600 frames per second. The analysis of data recorded showed that one voluntary blink could
+        // be divided into four phases; closing phase, closed phase, early-opening phase and late-opening
+        // phase identified by the distinctive action of the upper eyelid. One blink took 572 ± 25 ms and
+        // was accompanied by asymmetric motion with a much faster closing action compared with the opening
+        // action of the eye. The peak speed was determined to be approximately 250 mm s−1 and 160 mm s−1 during
+        // the closing and opening phases, respectively, and the closed phase and the late-opening phase took
+        // the shortest and longest time, respectively."
+        // Note in passing: This data contradicts various animators comments about slow start for closing, fast bounce opening.
+        
+        // Further scholarly notes regarding pupil movement during bkinking,
+        // which finds no evidence for upward movement of eye during blink:
+        // https://www.ncbi.nlm.nih.gov/pubmed/8591916
+        
+        // But see also:
+        // https://www.ncbi.nlm.nih.gov/pubmed/10848559
+        
+        // And also see this, which definitively states that there is
+        // downward and nasalward deflection of about 2°, returning in about 250 msec
+        // Also found that saccades overshoot when blink occurs during them.
+        // http://invibe.net/biblio_database_dyva/woda/data/att/8054.file.pdf
+        
+        // Here we see confirmation that blinks are more likely during large saccades:
+        // https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3262917/
+        
+// [original program's calculation]        blinkDuration = random(36000, 72000); // ~1/28 - ~1/14 sec
+                                                        // this is the period of time during which blinkFactor = 1.0
+      if(forceBlink || ((t - timeOfLastBlink) >= timeToNextBlink)) { // Start new blink?
+// [not needed/wanted??]  forceBlink = false;   // make sure it gets cleared
+        // yes, start new blink
         timeOfLastBlink = t;
         uint32_t blinkDuration = random(36000, 72000); // ~1/28 - ~1/14 sec
         // Set up durations for both eyes (if not already winking)
