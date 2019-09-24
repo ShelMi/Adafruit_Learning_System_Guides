@@ -69,6 +69,12 @@ float    iris_prev[IRIS_LEVELS] = { 0 };
 float    iris_next[IRIS_LEVELS] = { 0 };
 uint16_t iris_frame = 0;
 
+// For blink dynamics
+uint32_t interphasePauseUsec = 0L;
+#define  DONT_CARE 1000000
+uint32_t blinkDurationUsecTable[] = {0, ENBLINK_USEC, DONT_CARE, DEBLINK_1_USEC, DEBLINK_2_USEC};
+
+
 // Callback invoked after each SPI DMA transfer - sets a flag indicating
 // the next line of graphics can be issued as soon as its ready.
 static void dma_callback(Adafruit_ZeroDMA *dma) {
@@ -514,19 +520,59 @@ void loop() {
 
       // Similar to the autonomous eye movement above -- blink start times
       // and durations are random (within ranges).
+      
+      // NOTES ON BLINKING ---------------------------
+      
+      // A scholarly, possibly definitive, study of voluntary blink dynamics is at
+        // https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4043155/
+        // "The kinematics of one voluntary eye blink was studied using a high-speed video camera recording
+        // at 600 frames per second. The analysis of data recorded showed that one voluntary blink could
+        // be divided into four phases; closing phase, closed phase, early-opening phase and late-opening
+        // phase identified by the distinctive action of the upper eyelid. One blink took 572 ± 25 ms and
+        // was accompanied by asymmetric motion with a much faster closing action compared with the opening
+        // action of the eye. The peak speed was determined to be approximately 250 mm s−1 and 160 mm s−1 during
+        // the closing and opening phases, respectively, and the closed phase and the late-opening phase took
+        // the shortest and longest time, respectively."
+        // Note in passing: This data contradicts various animators comments about slow start for closing, fast bounce opening.
+        
+        // Concept we implement here is seen in Fig. 1a of this study,
+        // which plots palpebral [whew!] aperture measurements from 25 subjects, for voluntary eye blinks.
+        
+        // Further scholarly notes regarding pupil movement during blinking,
+        // which finds no evidence for upward movement of eye during blink:
+        // https://www.ncbi.nlm.nih.gov/pubmed/8591916
+        
+        // But see also:
+        // https://www.ncbi.nlm.nih.gov/pubmed/10848559
+        
+        // And also see this, which definitively states that there is
+        // downward and nasalward deflection of about 2°, returning in about 250 msec
+        // Also found that saccades overshoot when blink occurs during them.
+        // http://invibe.net/biblio_database_dyva/woda/data/att/8054.file.pdf
+        
+        // Here we see confirmation that blinks are more likely during large saccades:
+        // https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3262917/
+        
       if((t - timeOfLastBlink) >= timeToNextBlink) { // Start new blink?
         timeOfLastBlink = t;
-        uint32_t blinkDuration = random(36000, 72000); // ~1/28 - ~1/14 sec
+        if (eyeNum == 0) {
+          // [original program's calculation:        blinkDuration = random(36000, 72000); // ~1/28 - ~1/14 sec]
+          // interphasePauseUsec is the period of time during which blinkFactor = 1.0
+          // it wants to be the same for both eyes
+          interphasePauseUsec = random(MIN_INTERPHASE_PAUSE_USEC, MAX_INTERPHASE_PAUSE_USEC);
+            // values estimated from Fig. 1a in cited reference is 80 - 180 msec
+            // Those seem to my eyes to be a bit lazy-looking, so am ad-hoc changing them to 50 - 100 msec
+        }
         // Set up durations for both eyes (if not already winking)
         for(uint8_t e=0; e<NUM_EYES; e++) {
           if(eye[e].blink.state == NOBLINK) {
             eye[e].blink.state     = ENBLINK;
             eye[e].blink.startTime = t;
-            eye[e].blink.duration  = blinkDuration;
-          }
-        }
-        timeToNextBlink = blinkDuration * 3 + random(4000000);
-      }
+            eye[e].blink.duration  = blinkDurationUsecTable[ENBLINK];
+          }   // if(eye[e].blink.state == NOBLINK)
+        }   // for(uint8_t e=0; e<NUM_EYES; e++)
+        timeToNextBlink = TOTAL_BLINK_USEC + random(4*1000*1000);
+      }   // if((t - timeOfLastBlink) >= timeToNextBlink)
 
       float uq, lq; // So many sloppy temp vars in here for now, sorry
       if(tracking) {
@@ -561,22 +607,78 @@ void loop() {
 
 
       // Process blinks
-      if(eye[eyeNum].blink.state) { // Eye currently blinking?
+      if(eye[eyeNum].blink.state != NOBLINK) { // Eye currently blinking?  (Note: NOBLINK == 0)
+        // definitely blinking
         // Check if current blink state time has elapsed
         if((t - eye[eyeNum].blink.startTime) >= eye[eyeNum].blink.duration) {
-          if(++eye[eyeNum].blink.state > DEBLINK) { // Deblinking finished?
-            eye[eyeNum].blink.state = NOBLINK;      // No longer blinking
-            eye[eyeNum].blinkFactor = 0.0;
-          } else { // Advancing from ENBLINK to DEBLINK mode
-            eye[eyeNum].blink.duration *= 2; // DEBLINK is 1/2 ENBLINK speed
-            eye[eyeNum].blink.startTime = t;
+          eye[eyeNum].blink.startTime = t;
+          // advance to next blink state
+          switch (++eye[eyeNum].blink.state) {
+            case ENBLINK:
+              // Init lid closing phase, linear interpolation
+              eye[eyeNum].blink.duration = blinkDurationUsecTable[ENBLINK];
+              eye[eyeNum].blinkFactor = 0.0;    // start this phase fully unblinked
+              break;
+              
+            case INTERBLINK:   // eyelid is completely closed now
+              // Init lid shut phase
+              eye[eyeNum].blink.duration = interphasePauseUsec;
+              eye[eyeNum].blinkFactor = 1.0;    // start this phase fully blinked
+              break;
+              
+            case DEBLINK_1:   // eyelid is in the linear interpolation opening phase
+              // Init lid opening phase 1
+              eye[eyeNum].blink.duration = blinkDurationUsecTable[DEBLINK_1];
+              // eye[eyeNum].blinkFactor = 1.0;    // redundant, eyelid is still closed
+              break;
+              
+            case DEBLINK_2:   // eyelid asymptotically approaches fully open state
+              // Init lid opening phase 2
+              eye[eyeNum].blink.duration = blinkDurationUsecTable[DEBLINK_2];
+              // [don't change eye[eyeNum].blinkFactor, since we're still in the midst of a deblink phase]
+              break;
+            
+            default:
+              // Beyond the end of DEBLINK_2, so no longer blinking
+              eye[eyeNum].blink.state = NOBLINK;
+              eye[eyeNum].blinkFactor = 0.0;    // now fully unblinked
+              break;
+          }   // switch (++eye[eyeNum].blink.state)
+        }   // if((t - eye[eyeNum].blink.startTime) >= eye[eyeNum].blink.duration)
+        // we have now initialized a new state
+      
+        // here we are in a state, either continuing or just-initialized, and must compute the blink factor
+        float fracTime = (float)(t - eye[eyeNum].blink.startTime) / (float)eye[eyeNum].blink.duration;    // e.g. 0.2, or 1.5, etc.
+        switch (eye[eyeNum].blink.state) {
+          case ENBLINK:
+            // lids are closing, so blink factor is going up
+            //linear interpolation from full open to full close during closing phase
+            eye[eyeNum].blinkFactor = fracTime;
+            break;
+            
+          case INTERBLINK:
+            // fully closed
             eye[eyeNum].blinkFactor = 1.0;
-          }
-        } else {
-          eye[eyeNum].blinkFactor = (float)(t - eye[eyeNum].blink.startTime) / (float)eye[eyeNum].blink.duration;
-          if(eye[eyeNum].blink.state == DEBLINK) eye[eyeNum].blinkFactor = 1.0 - eye[eyeNum].blinkFactor;
-        }
-      }
+            break;
+            
+          case DEBLINK_1:
+            // lids are opening, so blinkFactor is going down, linearly toward a non-zero target e.g.0.20
+            eye[eyeNum].blinkFactor = 1.0 - (1.0 - DEBLINK_1_TARGET) * fracTime;    // e.g. 1-(1-.2)*0 to 1-(1-.2)*1
+                                                                                    //      1-(.8)*0   to 1-(.8)*1
+                                                                                    //      1          to .2
+            break;
+          
+          case DEBLINK_2:
+          // lids are still opening, so blink factor is going down, but with a time constant
+          // N.B. the value stored in blink.duration is the *time constant*, so this phase lasts for NUM_TCS * blink.duration
+            eye[eyeNum].blinkFactor = DEBLINK_1_TARGET * exp(-fracTime * NUM_TCS);            // e.g. .2*e^0 to .2*e^-3
+            break;
+            
+          default:
+            // OK to get here - NOBLINK
+            break;
+        }   // switch (++eye[eyeNum].blink.state)
+      }   // if(eye[eyeNum].blink.state != NOBLINK)
 
       // Periodically report frame rate. Really this is "total number of
       // eyeballs drawn." If there are two eyes, the overall refresh rate

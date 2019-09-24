@@ -113,11 +113,53 @@ typedef struct {
 } columnStruct;
 
 // A simple state machine is used to control eye blinks/winks:
-#define NOBLINK     0   // Not currently engaged in a blink
-#define ENBLINK     1   // Eyelid is currently closing
-#define DEBLINK 2       // Eyelid is currently opening
+// scholarly reference: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4043155/
+#define NOBLINK 0       // Not currently engaged in a blink
+#define ENBLINK 1       // Eyelid is currently closing
+#define INTERBLINK  2   // eyelid is closed
+#define DEBLINK_1   3   // Eyelid first phase of opening
+#define DEBLINK_2   4   // Eyelid second phase of opening
+
+// these values come from above-cited reference, analyzed in my file "Blink dynamics.psd"
+#define ENBLINK_USEC      (70*1000)
+///#define MIN_INTERPHASE_PAUSE_USEC   (80*1000)       // estimated from Fig. 1a in cited reference
+///#define MAX_INTERPHASE_PAUSE_USEC   (180*1000)      // estimated from Fig. 1a in cited reference
+#define MIN_INTERPHASE_PAUSE_USEC   (50*1000)       // becuz above seemed too slow
+#define MAX_INTERPHASE_PAUSE_USEC   (100*1000)      // becuz above seemed too slow
+// data at https://www.cs.cmu.edu/~ltrutoiu/pdfs/TAP_2011_trutoiu.pdf is another source of insights,
+// e.g. "Participants found fully closed blinks to be more natural than naturally closed blinks."
+
+// data at https://www.pnas.org/content/115/9/2246 suggests that blinks are
+//   correlated with saccades to minimize required optic interruption
+
+// Data at https://iovs.arvojournals.org/article.aspx?articleid=2165816 concludes:
+// "Conclusions.: The normal blinking process is characterized by highly positively skewed interblink
+// time distributions. This result means that most blinks have a short time interval, and occasionally
+// a small number of blinks have long time intervals."
+// [A distribution function screen capture is available in the doc directory, called something like interblink interval.jpg] 
+
+// https://www.nature.com/articles/s41598-018-28174-7 states:
+// "These results suggest that inter-blink interval can be used as an indicator of primate vigilance toward predators."
+
+// See also https://www.ieice.org/nolta/symposium/archive/2016/articles/1126.pdf "Modeling of Human Spontaneous Eyeblinks"
+
+// From https://books.google.com/books?id=4OCdDwAAQBAJ&pg=PA59&lpg=PA59&dq=distribution+of+interblink+intervals&source=bl&ots=ww0uQssK-1&sig=ACfU3U1ntgXGlGAO1HVkF2l7aK3cT6Xw3Q&hl=en&sa=X&ved=2ahUKEwjRl5fdpdfkAhVRnKwKHbOMDZk4ChDoATAJegQICRAB#v=onepage&q=distribution%20of%20interblink%20intervals&f=false
+//  "eye-blinks likely are socially relevant behavioral events"
+
+#define DEBLINK_1_USEC    (130*1000)
+#define DEBLINK_1_TARGET  0.2
+#define DEBLINK_2_TC_USEC (115*1000)   // time constant for exponential return to full opening
+
+// #define ENBLINK_USEC      (1000*1000)
+// #define DEBLINK_1_USEC    (1000*1000)
+// #define DEBLINK_1_TARGET  0.2
+// #define DEBLINK_2_TC_USEC (1000*1000)   // time constant for exponential return to full opening
+
+#define NUM_TCS           3   // number of time constants
+#define DEBLINK_2_USEC    (NUM_TCS * DEBLINK_2_TC_USEC)   // long enough to get close to target
+#define TOTAL_BLINK_USEC  (ENBLINK_USEC + MAX_INTERPHASE_PAUSE_USEC + DEBLINK_1_USEC + DEBLINK_2_USEC)  // used only when setting time to next blink
 typedef struct {
-  uint8_t  state;       // NOBLINK/ENBLINK/DEBLINK
+  uint8_t  state;       // NOBLINK/ENBLINK/INTERBLINK/DEBLINK_1/DEBLINK_2
   uint32_t duration;    // Duration of blink state (micros)
   uint32_t startTime;   // Time (micros) of last state change
 } eyeBlink;
