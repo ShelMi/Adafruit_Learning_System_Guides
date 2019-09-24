@@ -844,6 +844,7 @@ void loop() {
     if(eyeNum == (NUM_EYES-1)) {
       // Handle pupil scaling
       if(lightSensorPin >= 0) {
+        uint16_t rawReading;
         // Read light sensor, but not too often (Seesaw hates that)
         #define LIGHT_INTERVAL (1000000 / 10) // 10 Hz, don't poll Seesaw too often
         if((t - lastLightReadTime) >= LIGHT_INTERVAL) {
@@ -851,10 +852,25 @@ void loop() {
           // pupils will react even if the opposite eye is stimulated.
           // Meaning we can get away with using a single light sensor for
           // both eyes. This comment has nothing to do with the code.
-          uint16_t rawReading = readLightSensor();
+#if !defined DEBLINK_1
+          // using original-style blink dynamics
+          // original blink is so fast it does not make any visual difference in iris contraction
+          if (eye[0].blink.state != DEBLINK) {
+#else
+          // using humanized blink dynamics
+          if (eye[0].blink.state != DEBLINK_1) {
+#endif
+            rawReading = readLightSensor();
+          } else {    // if (eye[0].blink.state != INTERBLINK)
+            // simulate no light getting to the pupil because of the lid
+            rawReading = lightSensorMin;    // allow pupil to dilate during complete blink
+          }   // if (eye[0].blink.state != INTERBLINK)  else
+//Serial.print("rawReading: "); Serial.println(rawReading);
+          // Tests showed readings ranged between 10 to 1015 as went from dark to very bright light
           if(rawReading <= 1023) {
             if(rawReading < lightSensorMin)      rawReading = lightSensorMin; // Clamp light sensor range
             else if(rawReading > lightSensorMax) rawReading = lightSensorMax; // to within usable range
+//Serial.print("mod rawReading: "); Serial.println(rawReading);
             float v = (float)(rawReading - lightSensorMin) / (float)(lightSensorMax - lightSensorMin); // 0.0 to 1.0
             v = pow(v, lightSensorCurve);
             lastLightValue    = irisMin + v * irisRange;
@@ -868,8 +884,42 @@ void loop() {
             }
           }
         }
+///        #define HUMAN_IRIS_CHARACTERISTICS   false
+        #define HUMAN_IRIS_CHARACTERISTICS   true  // https://www.exploratorium.edu/snacks/pupil
+        // AND, tada! here is an actual plot of the difference: https://www.youtube.com/watch?v=QLCxJKJMZuE
+        // analysis of image shows:
+        // scale: 292 px -> 90 sec
+        // 150 px total delta pupil size
+        // (1 - 1/e) * delta = 95
+        // repeated measure dilate px: 6.6, 8.7, 8.6, 8.0, avg is 8.0 px
+        //  thus 8.0 * 90 / 292 = 2.5 sec time constant for dilation
+        // and for contraction, it's tiny, but time constant is ~ 0.9, 0.9, 1.2, 1.3, thus avg is 1.1 px
+        // so time constant is 1.1 * 90 / 292 = .34 sec
+        //ratio of slopes is 7.4
+        
+        // AND, tada again!  scholarly article at https://www.mdpi.com/1422-0067/15/12/23448 results in the following analysis:
+        // 1.9 / 22.7 contract slope, ~7.8 / 12.6 dilate slope
+        // ratio of slopes is 0.62 / 0.084 = 7.4
+        
+        // Holy cow!!  Two entirely different estimates yielded the same value: 7.4  What a triumph of luck over precision!
+        #if HUMAN_IRIS_CHARACTERISTICS    // pupil:
+          // faster time constant when light level is increasing, than when decreasing
+          #define STANDARD_ADAFRUIT_IRIS_TIME_CONSTANT_SEC   3.0
+          #define DILATE_LOW_PASS_FILTER_MULTIPLIER          (1.0 / (10.0 * STANDARD_ADAFRUIT_IRIS_TIME_CONSTANT_SEC))  // 10.0 is samples/sec.
+          #define RATIO_OF_CONTRACT_TO_DILATE_TIME_CONSTANTS 7.4    // value measured from scholarly articles referenced above
+          #define CONTRACT_LOW_PASS_FILTER_MULTIPLIER        (DILATE_LOW_PASS_FILTER_MULTIPLIER * RATIO_OF_CONTRACT_TO_DILATE_TIME_CONSTANTS)
+          if (lastLightValue < irisValue) {
+            // value is decreasing, use longer time constant - the standard adafruit value
+            irisValue = (irisValue * (1.0 - DILATE_LOW_PASS_FILTER_MULTIPLIER)) + (lastLightValue * DILATE_LOW_PASS_FILTER_MULTIPLIER); // original filter response for smooth reaction
+          } else {
+            // value is increasing, use faster time constant
+            irisValue = (irisValue * (1.0 - CONTRACT_LOW_PASS_FILTER_MULTIPLIER)) + (lastLightValue * CONTRACT_LOW_PASS_FILTER_MULTIPLIER); // e.g. 7.4x faster filter response for smooth reaction
+          }
+        #else
+          // same time constant for both directions
         irisValue = (irisValue * 0.97) + (lastLightValue * 0.03); // Filter response for smooth reaction
-      } else {
+        #endif
+      } else {    // if(lightSensorPin >= 0)
         // Not light responsive. Use autonomous iris w/fractal subdivision
         float n, sum = 0.5;
         for(uint16_t i=0; i<IRIS_LEVELS; i++) { // 0,1,2,3,...
