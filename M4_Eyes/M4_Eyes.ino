@@ -491,6 +491,7 @@ void loop() {
     if(!x) { // If it's the first column...
 
       // ONCE-PER-FRAME EYE ANIMATION LOGIC HAPPENS HERE -------------------
+      
       float eyeX, eyeY;
       // Eye movement
       int32_t dt = t - eyeMoveStartTime;      // uS elapsed since last eye event
@@ -560,6 +561,7 @@ void loop() {
         // Eyelids naturally "track" the pupils (move up or down automatically)
         int ix = (int)map2screen(mapRadius - eye[eyeNum].eyeX) + 120, // Pupil position
             iy = (int)map2screen(mapRadius - eye[eyeNum].eyeY) + 120; // on screen
+
 
         // glint position logic (must come before the trackFactor mod of iy)
         glintLeftX[eyeNum] = ix - GLINT_RADIUS - (ix - 120) * GLINT_STABILIZER;  // change of glint as eye rotates...
